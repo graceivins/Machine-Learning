@@ -1,0 +1,226 @@
+---
+title: "Machine Learning with NHANES Data"
+description: "TBD"
+author:
+  - name: Grace Ivins
+    url: https://github.com/graceivins
+date: "4/16/2020"
+output: radix::radix_article
+---
+
+This project uses R and Python to implement a machine learning algorithm to predict systolic blood pressure in the NHANES data set. (Why is systolic BP so important? How could people use predictions of systolic BP? Set up a website with a tool to predict systolic BP. Here we use only measures that people could measure and report themselves. If predicted is high, maybe it's time to see a doctor.)
+
+The National Health and Nutrition Examination Survey (NHANES) has been conducted since 1971 and aims to assess the mental and physical wellbeing of children and adults in the United States. Each participant completes a questionnaire, is physically examined by a medical health professional, and undergoes laboratory tests (blood work, etc.). 
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(
+    echo = TRUE,      # Output code chunks
+    message = FALSE,  # Toggle off message output 
+    warning = FALSE)  # Toggle off warning output
+```
+
+```{r}
+library(reticulate)
+```
+
+```{r}
+conda_list()
+```
+
+```{r, message= FALSE, warning=FALSE}
+use_condaenv("anaconda3")
+```
+
+```{python, echo=F, warning=F, message=F}
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn import preprocessing
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.externals import joblib
+```
+
+```{python, message=F, warning=F, echo=F}
+datanan = pd.read_csv("Nhanes_ML.csv", sep = ",")
+data=datanan.dropna()
+```
+
+First, we have a look at the first few rows of the data.
+
+```{python}
+print(data.head())
+```
+
+This is a medium sized data set. We can see all variables more clearly if we "glimpse" the data instead using R:
+
+```{r}
+library(tidyverse)
+
+py$data %>% 
+    as.tibble() %>%
+    glimpse()
+```
+
+Let's have a look at a correlation matrix:
+
+```{r}
+corr <- cor(py$data)
+round(corr, 2)
+```
+
+We will exclude BMI as BMI is a ratio of height and weight.
+
+```{python}
+data=data.drop("BMI",axis=1)
+```
+
+Since income and poverty (defined as the ratio of family income to poverty guidelines) are highly correlated, we will also remove income to prevent any issues associated with multicollinearity in the analysis.
+
+```{python}
+data=data.drop("HHIncomeMid",axis=1)
+```
+
+Our response variable is the average of three systolic blood pressure measurements (reported as BPSysAve). Setting our response vector and variable matrix:
+
+```{python}
+y = data.BPSysAve
+X = data.drop("BPSysAve", axis=1)
+```
+
+Take a peek at our new correlation matrix:
+
+```{r}
+corr <- cor(py$data)
+round(corr, 2)
+```
+
+What's going on with this data? Well, not much, and that can sometimes happen with data collected in the real world. We will continue to use this data set to learn more about ML. First, we need to do a little more EDA to explore the distributions of our response and predictor variables. 
+
+Let's visualize the distribution of our variables.
+
+```{r}
+par(mfrow=c(3,3))
+for (i in 1:ncol(py$data)){
+  hist(py$data[,i],main=colnames(py$data[i]),xlab=colnames(py$data[i]))
+}
+```
+
+
+
+Split the data into a test set and a training set. The test_size option indicates what proportion of the data will be used as the test set. The random_state option indicates what seed will be used?
+
+```{python}
+X_train, X_test, y_train, y_test = train_test_split(
+  X, y,
+  test_size    = 0.2,
+  random_state = 123
+)
+```
+
+Now, we need to transform the data. Explain why. 
+
+$$z=(x-\mu)/\sigma$$
+
+After standardizing, the mean should be near 0 and the standard deviaiton should be near 1. "The preprocessing module further provides a utility class StandardScaler that implements the Transformer API to compute the mean and standard deviation on a training set so as to be able to later reapply the same transformation on the testing set."
+
+```{python}
+scaler = preprocessing.StandardScaler().fit(X_train)
+```
+
+"The scaler instance can then be used on new data to transform it the same way it did on the training set:"
+
+```{python}
+X_test_scaled = scaler.transform(X_test)
+X_test_scaled.mean(axis=0)
+X_test_scaled.std(axis=0)
+```
+
+"Setup an ML pipeline using make_pipeline(). The pipeline consists of two steps. First, numeric values are scaled, then a random forest regression model is created."
+
+```{python}
+pipeline = make_pipeline(
+    preprocessing.StandardScaler(),
+    RandomForestRegressor(n_estimators = 100)
+    )
+```
+
+```{python}
+hyperparameters = {
+    "randomforestregressor__max_features" : ["auto", "sqrt", "log2"],
+    "randomforestregressor__max_depth"    : [None, 5, 3, 1]
+}
+```
+
+```{python}
+clf = GridSearchCV(pipeline, hyperparameters, cv = 10)
+clf.fit(X_train, y_train)
+```
+
+```{python}
+print(clf.best_params_)
+```
+
+Fit assessment:
+
+```{python}
+y_pred = clf.predict(X_test)
+print(r2_score(y_test, y_pred))
+```
+
+```{python}
+print(mean_squared_error(y_test, y_pred))
+```
+
+```{r}
+library(tidyverse)
+library(tidyquant) # for theme_tq()
+
+# Manipulate data for ggplot
+results_tbl <- tibble(
+    y_test = py$y_test,
+    y_pred = py$y_pred
+) %>%
+    rowid_to_column() %>%
+    arrange(y_test) %>%
+    mutate(rowid = as_factor(as.character(rowid))) %>%
+    rowid_to_column("sorted_rowid") %>%
+    gather(key = "key", value = "value", -c(rowid, sorted_rowid)) 
+
+# Make ggplot
+results_tbl %>%
+    ggplot(aes(sorted_rowid, value, color = key)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth() + 
+    theme_tq() +
+    scale_color_tq() +
+    labs(
+        title = "Prediction Versus Actual",
+        subtitle = "Poor Health Days",
+        x = "Sorted RowID", y = "days health bad"
+    )
+```
+
+A look at the residuals:
+
+```{r}
+results_tbl %>%
+  # Manipulation
+  spread(key, value) %>%
+  mutate(resid = y_pred - y_test) %>%
+  # Plot
+  ggplot(aes(sorted_rowid, resid, color = as.character(y_test))) +
+    geom_point(alpha = 0.5) +
+    theme_tq() +
+    scale_color_tq() +
+    labs(
+        title = "Residual Analysis (Prediction - Actual)",
+        subtitle = "Days Poor Physical Health",
+        x = "Sorted Row ID", y = "Residual",
+        color = "Quality Level"
+    )
+```
+
+Something weird is happening. Not a good fit on the ends.
