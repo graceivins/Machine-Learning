@@ -1,6 +1,5 @@
 ---
 title: "Machine Learning with NHANES Data"
-description: "TBD"
 author:
   - name: Grace Ivins
     url: https://github.com/graceivins
@@ -8,9 +7,12 @@ date: "4/16/2020"
 output: radix::radix_article
 ---
 
-This project uses R and Python to implement a machine learning algorithm to predict systolic blood pressure in the NHANES data set. (Why is systolic BP so important? How could people use predictions of systolic BP? Set up a website with a tool to predict systolic BP. Here we use only measures that people could measure and report themselves. If predicted is high, maybe it's time to see a doctor.)
+This project uses machine learning algorithms to predict systolic blood pressure in the NHANES data set. The National Health and Nutrition Examination Survey (NHANES) has been conducted since 1971 and aims to assess the mental and physical wellbeing of children and adults in the United States. Each participant completes a questionnaire, is physically examined by a medical health professional, and undergoes laboratory tests. 
 
-The National Health and Nutrition Examination Survey (NHANES) has been conducted since 1971 and aims to assess the mental and physical wellbeing of children and adults in the United States. Each participant completes a questionnaire, is physically examined by a medical health professional, and undergoes laboratory tests (blood work, etc.). 
+I have several goals for this project. I am primarily interested in learning the basics of machine learning and how machine learning differs from my master's discipline, statistics. Secondary goals include learning how to implement machine learning algorithms using packages in python and learning how to integrate R and Python to create reports that are useful and easy to read. 
+
+High systolic blood pressure is an important indicator of health, particularly for those over the age of 50, even when diastolic blood pressure is normal. Machine learning algortihms will allow us to use the wealth of NHANES data to predict systolic blood pressure with good accuracy. Why would we want to predict something that can be easily measured at a doctor's office? There are several reasons we might want to predict items that are relatively easy to measure. For example, we might want to create an online tool where people could input factors they can easily measure themselves, like height, weight, and age, that then predicts their systolic blood pressure. We might also want to know what factors contribute significantly to the prediction so that health campaigns are targeted to the right groups.
+
 
 ```{r, setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -19,22 +21,27 @@ knitr::opts_chunk$set(
     warning = FALSE)  # Toggle off warning output
 ```
 
-```{r}
+```{r, echo=FALSE, message= FALSE, warning=FALSE}
 library(reticulate)
 ```
 
-```{r}
+```{r, echo=FALSE, message= FALSE, warning=FALSE}
 conda_list()
 ```
 
-```{r, message= FALSE, warning=FALSE}
+```{r, echo=FALSE, message= FALSE, warning=FALSE}
 use_condaenv("anaconda3")
 ```
 
 ```{python, echo=F, warning=F, message=F}
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as seabornInstance
+import scipy as sc
 from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn import metrics 
 from sklearn import preprocessing
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.pipeline import make_pipeline
@@ -42,6 +49,10 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.externals import joblib
 ```
+
+When undertaking a data project, be it in statistics or machine learning, thorough inspection and cleaning are essential. The first thing I noticed when looking at the NHANES data was that it has quite a few NaN's. There are several options for dealing with missing values, like imputation and so forth. We will deal with them by removing any observations (rows) that include NaN's. This will have implications as we are removing individuals from the data. However, most of the NaN's occur in the alcohol units per day column as children were also a part of the study. 
+
+Since our concern here is systolic blood pressure, we aren't too worried about preserving the measurements on children.
 
 ```{python, message=F, warning=F, echo=F}
 datanan = pd.read_csv("Nhanes_ML.csv", sep = ",")
@@ -54,7 +65,7 @@ First, we have a look at the first few rows of the data.
 print(data.head())
 ```
 
-This is a medium sized data set. We can see all variables more clearly if we "glimpse" the data instead using R:
+This is a medium sized data set. We can see all variables more clearly if we "glimpse" the data instead using the tidyverse library in R:
 
 ```{r}
 library(tidyverse)
@@ -77,17 +88,10 @@ We will exclude BMI as BMI is a ratio of height and weight.
 data=data.drop("BMI",axis=1)
 ```
 
-Since income and poverty (defined as the ratio of family income to poverty guidelines) are highly correlated, we will also remove income to prevent any issues associated with multicollinearity in the analysis.
+Since income and poverty (defined as the ratio of family income to poverty guidelines) are highly correlated, we will also remove income as the information the variables contribute to the prediction will be redundant. If we wanted to make inference, as we often do in statistics, we would be concerned about multicollinearity. In ML, we are often primarily concerned with making predictions and so aren't as concerned with multicollinearity.
 
 ```{python}
 data=data.drop("HHIncomeMid",axis=1)
-```
-
-Our response variable is the average of three systolic blood pressure measurements (reported as BPSysAve). Setting our response vector and variable matrix:
-
-```{python}
-y = data.BPSysAve
-X = data.drop("BPSysAve", axis=1)
 ```
 
 Take a peek at our new correlation matrix:
@@ -97,9 +101,32 @@ corr <- cor(py$data)
 round(corr, 2)
 ```
 
-What's going on with this data? Well, not much, and that can sometimes happen with data collected in the real world. We will continue to use this data set to learn more about ML. First, we need to do a little more EDA to explore the distributions of our response and predictor variables. 
+What's going on with this data? Well, not much, and that can sometimes happen with data collected in the real world. We will continue to use this data set to learn more about ML. We need to do more exploratory data analysis before we can start running our model.  
 
-Let's visualize the distribution of our variables.
+Let's start with summary statistics. What we are looking for here are reasonable values. If one of our variables is Age, for example, we would be wary of a maximum of 110. The means and quantiles look reasonable except for our response variable, BPSysAve, and alcohol units per day. Notice that the third quartile (75th percentile) for the alcohol variable looks reaosnable at a value of 3 but that the maximum is 82 which is clearly an error. 
+
+```{python}
+data.describe()
+data['BPSysAve'].describe()
+```
+
+Outliers can be an important consideration before applying many machine learning algorithms. Ideally, we would like all of our data points to make equivalent contributions to our predictions rather than allowing one or a handfull of observations to skew the results. We will deal with outliers before we conduct our analyses by standardizing our data and exluding values that are more than three standard deviations away from the mean.
+
+```{python}
+z_scores = sc.stats.zscore(data)
+abs_z_scores = np.abs(z_scores)
+filtered_entries = (abs_z_scores < 3).all(axis=1)
+data = data[filtered_entries]
+```
+
+Let's look at those summary stats again to check that the values, particularly for alcohol units per day and systolic BP, look more reaosnable. Notice now that the maximum number of alcohol units per day is still quite high at 12 units, but not so high that no human being could possibly consume the amount in one day.
+
+```{python}
+data.describe()
+data['BPSysAve'].describe()
+```
+
+Another important consideration is the overall distribution of the variables, particularly for the response variable, BPSysAve. The variables poverty and alcohol units per day are heavily skewed. It does look like average systolic blood pressure is approximately normal. In statistics, it is important that assumptions like normality of the response variable are met before conducting certain types of analyses like regression. In ML, we may not be as concerned with these assumptions.
 
 ```{r}
 par(mfrow=c(3,3))
@@ -108,35 +135,104 @@ for (i in 1:ncol(py$data)){
 }
 ```
 
+Regression is one of two types of supervised machine learning. The other is classification (where the outcome is categorical or discrete-valued). Regression may be an appropriate model in this case as our outcome is continuous and quantitative. When we are finished with the analysis, we will have to assess the model's utility and determine whether the fit is good.
 
-
-Split the data into a test set and a training set. The test_size option indicates what proportion of the data will be used as the test set. The random_state option indicates what seed will be used?
+To get started, we will split the data into a test set and a training set. The test_size option indicates what proportion of the data will be used as the test set. The random_state option indicates what seed will be used. 
 
 ```{python}
+y = data.BPSysAve
+X = data.drop("BPSysAve", axis=1)
 X_train, X_test, y_train, y_test = train_test_split(
   X, y,
   test_size    = 0.2,
-  random_state = 123
+  random_state = 100
 )
 ```
 
-Now, we need to transform the data. Explain why. 
+Now, we need to transform the data. Regression ML algorithms can be sensitive to large differences in magnitudes across variables. We standardize the values, $x$ by subtracting the mean of that particular variable, $\mu$, and dividing by the standard deviation, $\sigma$.
 
 $$z=(x-\mu)/\sigma$$
 
-After standardizing, the mean should be near 0 and the standard deviaiton should be near 1. "The preprocessing module further provides a utility class StandardScaler that implements the Transformer API to compute the mean and standard deviation on a training set so as to be able to later reapply the same transformation on the testing set."
+Technically, $\mu$ and $\sigma$ are quantities in the population that we can never truly know. We will use our training set to approximate these values and then apply the same transformation to our test set.
 
 ```{python}
 scaler = preprocessing.StandardScaler().fit(X_train)
 ```
 
-"The scaler instance can then be used on new data to transform it the same way it did on the training set:"
+After standardizing, the mean should be near 0 and the standard deviaiton should be near 1. Let's check whether this is approximately true.
 
 ```{python}
 X_test_scaled = scaler.transform(X_test)
 X_test_scaled.mean(axis=0)
 X_test_scaled.std(axis=0)
 ```
+
+Now, we will begin the training phase for our first model choice, multiple linear regression. Using the code below, we are telling our machine to learn which coefficients for each term will allow us to make the best predictions for our outcome, average systolic blood pressure.
+
+```{python}
+regressor=LinearRegression()
+regressor.fit(X_train,y_train)
+```
+
+Let's see what coefficients have been chosen:
+
+```{python}
+coeff_df = pd.DataFrame(regressor.coef_, X.columns, columns=['Coefficient'])  
+coeff_df
+```
+
+We want to be careful about our language when we interpret coefficients. We say that for a one unit increase in a given variable the change in systolic blood pressure is given by the coefficient, while holding all other predictors constant. The last bit there is key and should not be discarded. For example, for eevery one unit increase in total cholesterol, systolic blood pressure tends to increase by 1.4 while holding all other predictors constant.
+
+Using our test set, we will make predictions for our response variable using the coefficients above:
+
+```{python}
+y_pred = regressor.predict(X_test)
+```
+
+We want to see how well our model fits. Let's compute an examine our residuals. A residual is the difference between the observed value in a data set and a predicted value. Let's create a data frame that collects and stores our fitted and predicted values.
+
+```{python}
+df = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred})
+df.head(25)
+df.describe()
+```
+
+Let's use ggplot2 in R to plot the values against one another:
+
+```{r}
+library(tidyverse)
+library(tidyquant) # for theme_tq()
+
+# Manipulate data for ggplot
+results_tbl <- tibble(
+    y_test = py$y_test,
+    y_pred = py$y_pred
+) %>%
+    rowid_to_column() %>%
+    arrange(y_test) %>%
+    mutate(rowid = as_factor(as.character(rowid))) %>%
+    rowid_to_column("sorted_rowid") %>%
+    gather(key = "key", value = "value", -c(rowid, sorted_rowid)) 
+
+# Make ggplot
+results_tbl %>%
+    ggplot(aes(sorted_rowid, value, color = key)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth() + 
+    theme_tq() +
+    scale_color_tq() +
+    labs(
+        title = "Prediction Versus Actual",
+        subtitle = "Systolic BP",
+        x = "Sorted RowID", y = "BPSysAve"
+    )
+```
+
+You can fairly easily see in the plot that this is not at all a good fit, especially for values on the ends. 
+
+Let's try another model. Random forest regression...
+
+
 
 "Setup an ML pipeline using make_pipeline(). The pipeline consists of two steps. First, numeric values are scaled, then a random forest regression model is created."
 
@@ -155,7 +251,7 @@ hyperparameters = {
 ```
 
 ```{python}
-clf = GridSearchCV(pipeline, hyperparameters, cv = 10)
+clf = GridSearchCV(pipeline, hyperparameters, cv = None)
 clf.fit(X_train, y_train)
 ```
 
@@ -198,8 +294,8 @@ results_tbl %>%
     scale_color_tq() +
     labs(
         title = "Prediction Versus Actual",
-        subtitle = "Poor Health Days",
-        x = "Sorted RowID", y = "days health bad"
+        subtitle = "Systolic BP",
+        x = "Sorted RowID", y = "BPSysAve"
     )
 ```
 
@@ -217,9 +313,8 @@ results_tbl %>%
     scale_color_tq() +
     labs(
         title = "Residual Analysis (Prediction - Actual)",
-        subtitle = "Days Poor Physical Health",
-        x = "Sorted Row ID", y = "Residual",
-        color = "Quality Level"
+        subtitle = "BPSysAve",
+        x = "Sorted Row ID", y = "Residual"
     )
 ```
 
