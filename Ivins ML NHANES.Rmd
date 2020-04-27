@@ -21,15 +21,15 @@ knitr::opts_chunk$set(
     warning = FALSE)  # Toggle off warning output
 ```
 
-```{r, echo=FALSE, message= FALSE, warning=FALSE}
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 library(reticulate)
 ```
 
-```{r, echo=FALSE, message= FALSE, warning=FALSE}
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 conda_list()
 ```
 
-```{r, echo=FALSE, message= FALSE, warning=FALSE}
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 use_condaenv("anaconda3")
 ```
 
@@ -167,7 +167,7 @@ X_test_scaled.mean(axis=0)
 X_test_scaled.std(axis=0)
 ```
 
-Now, we will begin the training phase for our first model choice, multiple linear regression. Using the code below, we are telling our machine to learn which coefficients for each term will allow us to make the best predictions for our outcome, average systolic blood pressure.
+Now, we will begin the training phase for our first model choice, multiple linear regression. Using the code below, we are telling our machine to learn which coefficients for each term will allow us to make the best predictions for our outcome, average systolic blood pressure. In other words, the function LinearRegression() minimizes the residual sum of squares. If we implement regression in this way, we are doing exactly what statisticians do when they run a linear regression model. The only differences are in how we will use our model output and the fact that we split our data into a test set and training set. That being said, these practices are also fairly commonly done in statistics as well.
 
 ```{python}
 regressor=LinearRegression()
@@ -189,7 +189,7 @@ Using our test set, we will make predictions for our response variable using the
 y_pred = regressor.predict(X_test)
 ```
 
-We want to see how well our model fits. Let's compute an examine our residuals. A residual is the difference between the observed value in a data set and a predicted value. Let's create a data frame that collects and stores our fitted and predicted values.
+We want to see how well our model fits. Let's compute and examine our residuals. A residual is the difference between the observed value in a data set and a predicted value. Let's create a data frame that collects and stores our fitted and predicted values.
 
 ```{python}
 df = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred})
@@ -197,7 +197,7 @@ df.head(25)
 df.describe()
 ```
 
-Let's use ggplot2 in R to plot the values against one another:
+Notice that the maximum predicted value is about 134 and the maximum observed value is 164. This suggests that the model may not be fitting well on the extremes. Let's use ggplot2 in R to plot the observed and predicted values against one another:
 
 ```{r}
 library(tidyverse)
@@ -228,13 +228,26 @@ results_tbl %>%
     )
 ```
 
-You can fairly easily see in the plot that this is not at all a good fit, especially for values on the ends. 
+You can fairly easily see in the plot that this is not at all a good fit, especially for values on the extreme ends. Let's have a look at the residuals:
 
-Let's try another model. Random forest regression...
+```{r}
+residuals=py$y_test-py$y_pred
+mean(residuals)
+plot(residuals)
+abline(h=0)
+```
 
+Ideally, we would like the mean of the residuals to be near 0, and they are. Also the residual plot looks pretty good. So, it looks like our model isn't fitting the extremes well, but it is misfitting them consistently. This would be a problem if we want to be able to predict extreme values. Let's get a value of $R^2$ for the multiple linear regression model. $R^2$ gives the proportion of variability in the response that is explained by the predictor variables.
 
+```{python}
+print(r2_score(y_test, y_pred))
+```
 
-"Setup an ML pipeline using make_pipeline(). The pipeline consists of two steps. First, numeric values are scaled, then a random forest regression model is created."
+For this model, about 19% of the variability in the response is explained by the predictors. Let's try another model. Random forest regression is another popular machine learning algorithm that is easy to implement in python. 
+
+Like linear regression, random forest regression is a supervised learning algorithm, meaning that inputs and outputs are clearly defined. Unlike linear regression, random forest regression is an ensemble learning algorithm. This means that predictions from many regression trees will be averaged. Regression trees discretize the values of the predictors and choose how to do that such that the residual sum of squares is minimized. This technique uses bootstrapping where random samples are taken with replacement and the trees run in parallel, independently of one another, until the results are averaged.
+
+To set up random forest egression in python, we can scale and set up the model simultaneously using a pipeline. Here n_estimators gives the number of trees. Generally, the more trees you have the better your predictions will be, but there is a point where predictions get only marginally better with too great a cost in computation time. To choose 100 trees, I checked the fit for 10, 100, and 200 trees and determined that 100 was optimal based on time of computation and accuracy of predictions.
 
 ```{python}
 pipeline = make_pipeline(
@@ -243,6 +256,10 @@ pipeline = make_pipeline(
     )
 ```
 
+In the code below the hyperparameters, maximum features and maximum depth, are given multiple options from which to choose. Maximum features gives the number of features or variables to consider when looking for the best split. The option are "auto", max_features=number of predictor variables, "sqrt", max_features=square root of the number of variables in the data set, and "log2", max_features=log base 2 of the number of predictor variables in the data.
+
+The hyperparameter max_depth gives the maximum depth of the tree. The depth of a decision tree is the length of the longest path from a root to a leaf. This can take integer values or "None". If "None" is chosen, then nodes are expanded until all leaves are pure, in other words when all of the data belongs to a single class, or discretized group in this case as all of our predictors are quantitative.
+
 ```{python}
 hyperparameters = {
     "randomforestregressor__max_features" : ["auto", "sqrt", "log2"],
@@ -250,16 +267,20 @@ hyperparameters = {
 }
 ```
 
+GridSearchCV exhaustively searchers for the optimal values of the hyperparameters by trying all combinations. When cv=None, the grid search is completed using 5-fold cross validation (CV). Cross validation is essentially a model validation technique that is used when prediction is the goal. In general, $k$-fold CV partitions the data into $k$ subsets. Below, we have set cv=10, so we are using 10-fold CV.
+
 ```{python}
-clf = GridSearchCV(pipeline, hyperparameters, cv = None)
+clf = GridSearchCV(pipeline, hyperparameters, cv = 10)
 clf.fit(X_train, y_train)
 ```
+
+Using the command "best_params_" below we can see which values for the hyperparameters were chosen. Max depth was chosen to be "None" and max features was chosen to be "log2".
 
 ```{python}
 print(clf.best_params_)
 ```
 
-Fit assessment:
+Now, we want to see how well the random forest model fit the data. First we will look at the value of $R^2$. The value is much higher than for our multiple linear regression model. Here, the proportion of variability that is explained by the predictors is about 56%. 
 
 ```{python}
 y_pred = clf.predict(X_test)
@@ -269,6 +290,16 @@ print(r2_score(y_test, y_pred))
 ```{python}
 print(mean_squared_error(y_test, y_pred))
 ```
+
+Let's have a look at our observed and predicted values:
+
+```{python}
+df = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred})
+df.head(25)
+df.describe()
+```
+
+We'll also plot our observed values against our predicted values:
 
 ```{r}
 library(tidyverse)
@@ -302,20 +333,9 @@ results_tbl %>%
 A look at the residuals:
 
 ```{r}
-results_tbl %>%
-  # Manipulation
-  spread(key, value) %>%
-  mutate(resid = y_pred - y_test) %>%
-  # Plot
-  ggplot(aes(sorted_rowid, resid, color = as.character(y_test))) +
-    geom_point(alpha = 0.5) +
-    theme_tq() +
-    scale_color_tq() +
-    labs(
-        title = "Residual Analysis (Prediction - Actual)",
-        subtitle = "BPSysAve",
-        x = "Sorted Row ID", y = "Residual"
-    )
+residuals=py$y_test-py$y_pred
+mean(residuals)
+plot(residuals)
+abline(h=0)
 ```
 
-Something weird is happening. Not a good fit on the ends.
